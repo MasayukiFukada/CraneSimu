@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>クレーンゲーム 橋渡しシミュレーター</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="ui">
+        <button id="btn-left">左 (X-)</button>
+        <button id="btn-right">右 (X+)</button>
+        <button id="btn-forward">奥 (Z-)</button>
+        <button id="btn-backward">手前 (Z+)</button>
+        <button id="btn-drop">降下 (Start)</button>
+        <button id="btn-reset">リセット</button>
+      </div>
+      <canvas id="canvas"></canvas>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
