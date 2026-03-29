@@ -9,12 +9,18 @@
   <body>
     <div id="app">
       <div id="ui">
-        <button id="btn-left">左 (X-)</button>
-        <button id="btn-right">右 (X+)</button>
-        <button id="btn-forward">奥 (Z-)</button>
-        <button id="btn-backward">手前 (Z+)</button>
-        <button id="btn-drop">降下 (Start)</button>
-        <button id="btn-reset">リセット</button>
+        <div class="row">
+          <button id="btn-left">左 (X-)</button>
+          <button id="btn-right">右 (X+)</button>
+          <button id="btn-forward">奥 (Z-)</button>
+          <button id="btn-backward">手前 (Z+)</button>
+        </div>
+        <div class="row">
+          <button id="btn-drop" style="background: #ff4444; color: white;">降下 (Start)</button>
+          <button id="btn-open">アーム開 (Test)</button>
+          <button id="btn-close">アーム閉 (Test)</button>
+          <button id="btn-reset">リセット</button>
+        </div>
       </div>
       <canvas id="canvas"></canvas>
     </div>

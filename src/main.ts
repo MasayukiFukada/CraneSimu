@@ -14,15 +14,30 @@ class CraneSimulator {
   private prizeMesh!: THREE.Mesh;
   private craneBody!: CANNON.Body;
   private craneMesh!: THREE.Group;
-  private bridgeBodies: CANNON.Body[] = [];
+  private leftArmBody!: CANNON.Body;
+  private rightArmBody!: CANNON.Body;
+  private leftArmGroup!: THREE.Group;
+  private rightArmGroup!: THREE.Group;
+
+  // 定数
+  private readonly CLOSED_ANGLE = 0.1;
+  private readonly OPEN_ANGLE = -0.7;
+  private readonly ARM_POWER = 10.0;
+
+  // 衝突フィルタ
+  private readonly BIT_CRANE = 1;
+  private readonly BIT_ARM = 2;
+  private readonly BIT_PRIZE = 4;
+  private readonly BIT_BRIDGE = 8;
 
   // 状態
-  private cranePos = new THREE.Vector3(0, 5, 0);
-  private craneSpeed = 0.05;
+  private cranePos = new THREE.Vector3(0, 8.5, 0);
   private isDropping = false;
+  private isTouchingSomething = false;
+  private targetLeftAngle = 0.1;
+  private targetRightAngle = -0.1;
 
   constructor() {
-    // Three.js 初期化
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf0f0f0);
 
@@ -32,13 +47,17 @@ class CraneSimulator {
     this.renderer.setPixelRatio(window.devicePixelRatio);
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    this.camera.position.set(5, 8, 10);
-
+    this.camera.position.set(8, 8, 12);
+    
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.target.set(0, 5, 0);
+    this.controls.update();
 
-    // 物理ワールド初期化
     this.world = new CANNON.World();
     this.world.gravity.set(0, -9.82, 0);
+    this.world.allowSleep = false;
+
+    this.scene.add(new THREE.GridHelper(20, 20));
 
     this.setupLights();
     this.setupBridge();
@@ -47,151 +66,192 @@ class CraneSimulator {
     this.setupUI();
 
     this.animate();
-
     window.addEventListener('resize', () => this.onWindowResize());
   }
 
   private setupLights() {
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    this.scene.add(ambientLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 5);
-    this.scene.add(directionalLight);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dl = new THREE.DirectionalLight(0xffffff, 0.8);
+    dl.position.set(5, 10, 5);
+    this.scene.add(dl);
   }
 
   private setupBridge() {
-    // 2本の平行な棒
-    const bridgeGeo = new THREE.CylinderGeometry(0.1, 0.1, 10, 16);
-    const bridgeMat = new THREE.MeshPhongMaterial({ color: 0x888888 });
-
-    const createRod = (z: number) => {
-      const rod = new THREE.Mesh(bridgeGeo, bridgeMat);
-      rod.rotation.z = Math.PI / 2;
-      rod.position.set(0, 3, z);
-      this.scene.add(rod);
-
-      const shape = new CANNON.Cylinder(0.1, 0.1, 10, 16);
-      const body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC });
-      body.addShape(shape, new CANNON.Vec3(0, 0, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 1), Math.PI / 2));
-      body.position.set(0, 3, z);
+    const bridgeMat = new CANNON.Material('bridge');
+    const guardMat = new CANNON.Material('guard');
+    const prizeMat = new CANNON.Material('prize');
+    const armMat = new CANNON.Material('arm'); // アーム用マテリアル追加
+    
+    const createRod = (z: number, y: number, mat: CANNON.Material, color: number) => {
+      const rodMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 10, 16), new THREE.MeshPhongMaterial({ color }));
+      rodMesh.rotation.z = Math.PI / 2;
+      rodMesh.position.set(0, y, z);
+      this.scene.add(rodMesh);
+      const body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, material: mat });
+      body.addShape(new CANNON.Cylinder(0.1, 0.1, 10, 16), new CANNON.Vec3(0, 0, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 1), Math.PI / 2));
+      body.position.set(0, y, z);
+      body.collisionFilterGroup = this.BIT_BRIDGE;
       this.world.addBody(body);
-      this.bridgeBodies.push(body);
     };
 
-    createRod(-1);
-    createRod(1);
+    createRod(-1, 3, bridgeMat, 0x888888);
+    createRod(1, 3, bridgeMat, 0x888888);
+    const guardZ = 1.0 + 0.4 + 0.8;
+    const guardY = 3.0 + 0.5;
+    createRod(-guardZ, guardY, guardMat, 0xcccccc);
+    createRod(guardZ, guardY, guardMat, 0xcccccc);
+
+    // 摩擦設定
+    this.world.addContactMaterial(new CANNON.ContactMaterial(bridgeMat, prizeMat, { friction: 1.0, restitution: 0.1 }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(guardMat, prizeMat, { friction: 0.1, restitution: 0.1 }));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(armMat, prizeMat, { friction: 0.2, restitution: 0.1 })); // アームと景品は滑りやすく
+    
+    (this as any).pMat = prizeMat;
+    (this as any).aMat = armMat;
   }
 
   private setupPrize() {
     const size = { x: 1.5, y: 1, z: 2.5 };
-    const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
-    const material = new THREE.MeshPhongMaterial({ color: 0xffaa00 });
-    this.prizeMesh = new THREE.Mesh(geometry, material);
+    this.prizeMesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshPhongMaterial({ color: 0xffaa00 }));
     this.scene.add(this.prizeMesh);
-
-    const shape = new CANNON.Box(new CANNON.Vec3(size.x / 2, size.y / 2, size.z / 2));
-    this.prizeBody = new CANNON.Body({ mass: 1 });
-    this.prizeBody.addShape(shape);
-    this.prizeBody.position.set(0, 4, 0); // 橋の上に置く
+    this.prizeBody = new CANNON.Body({ mass: 6.0, material: (this as any).pMat }); // 3倍重く
+    this.prizeBody.addShape(new CANNON.Box(new CANNON.Vec3(size.x/2, size.y/2, size.z/2)));
+    this.prizeBody.position.set(0, 4, 0);
+    this.prizeBody.collisionFilterGroup = this.BIT_PRIZE;
     this.world.addBody(this.prizeBody);
   }
 
   private setupCrane() {
-    // クレーン本体の簡易モデル
     this.craneMesh = new THREE.Group();
-    const bodyGeo = new THREE.SphereGeometry(0.5, 16, 16);
-    const bodyMat = new THREE.MeshPhongMaterial({ color: 0x4444ff });
-    const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    this.craneMesh.add(bodyMesh);
-
-    // アーム（ツメ）
-    const armGeo = new THREE.BoxGeometry(0.1, 1.5, 0.5);
-    const leftArm = new THREE.Mesh(armGeo, bodyMat);
-    leftArm.position.set(-0.6, -0.75, 0);
-    leftArm.rotation.z = 0.2;
-    this.craneMesh.add(leftArm);
-
-    const rightArm = new THREE.Mesh(armGeo, bodyMat);
-    rightArm.position.set(0.6, -0.75, 0);
-    rightArm.rotation.z = -0.2;
-    this.craneMesh.add(rightArm);
-
     this.scene.add(this.craneMesh);
+    this.craneMesh.add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), new THREE.MeshPhongMaterial({ color: 0x4444ff })));
 
-    // 物理体としてのクレーン（簡易的に1つの球体として扱う）
-    const shape = new CANNON.Sphere(0.5);
     this.craneBody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC });
-    this.craneBody.addShape(shape);
+    this.craneBody.addShape(new CANNON.Sphere(0.5));
+    this.craneBody.position.set(this.cranePos.x, this.cranePos.y, this.cranePos.z);
+    this.craneBody.collisionFilterGroup = this.BIT_CRANE;
+    this.craneBody.collisionFilterMask = this.BIT_PRIZE | this.BIT_BRIDGE; 
     this.world.addBody(this.craneBody);
+
+    const createArm = (isLeft: boolean) => {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshPhongMaterial({ color: 0x6666ff });
+      const ur = isLeft ? -0.7 : 0.7, lr = isLeft ? 0.4 : -0.4, tr = isLeft ? -0.1 : 0.1;
+
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.225, 1.0, 0.2), mat);
+      upper.rotation.z = ur;
+      upper.position.set(Math.sin(ur)*0.5, -Math.cos(ur)*0.5, 0);
+      group.add(upper);
+
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.075, 1.2, 0.2), mat);
+      lower.rotation.z = lr;
+      const p1x = Math.sin(ur)*1.0, p1y = -Math.cos(ur)*1.0;
+      lower.position.set(p1x + Math.sin(lr)*0.6, p1y - Math.cos(lr)*0.6, 0);
+      group.add(lower);
+
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.2), mat);
+      tip.rotation.z = tr;
+      const p2x = p1x + Math.sin(lr)*1.2, p2y = p1y - Math.cos(lr)*1.2;
+      tip.position.set(p2x + (isLeft?0.1:-0.1), p2y, 0);
+      group.add(tip);
+      this.scene.add(group);
+
+      const body = new CANNON.Body({ mass: 0.5, material: (this as any).aMat });
+      body.addShape(new CANNON.Box(new CANNON.Vec3(0.11, 0.5, 0.1)), new CANNON.Vec3(upper.position.x, upper.position.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), ur));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(0.04, 0.6, 0.1)), new CANNON.Vec3(lower.position.x, lower.position.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), lr));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(0.1, 0.02, 0.1)), new CANNON.Vec3(tip.position.x, tip.position.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), tr));
+
+      const attach = isLeft ? new CANNON.Vec3(-0.5, -0.2, 0) : new CANNON.Vec3(0.5, -0.2, 0);
+      body.position.set(this.cranePos.x + attach.x, this.cranePos.y + attach.y, this.cranePos.z);
+      body.angularDamping = 0.8;
+      body.collisionFilterGroup = this.BIT_ARM;
+      body.collisionFilterMask = this.BIT_PRIZE | this.BIT_BRIDGE; 
+      this.world.addBody(body);
+
+      this.world.addConstraint(new CANNON.PointToPointConstraint(this.craneBody, attach, body, new CANNON.Vec3(0,0,0)));
+      return { group, body };
+    };
+
+    const left = createArm(true);
+    this.leftArmGroup = left.group; this.leftArmBody = left.body;
+    const right = createArm(false);
+    this.rightArmGroup = right.group; this.rightArmBody = right.body;
+
+    const onCollide = (e: any) => { if (e.body === this.prizeBody) this.isTouchingSomething = true; };
+    this.craneBody.addEventListener('collide', onCollide);
+    this.leftArmBody.addEventListener('collide', onCollide);
+    this.rightArmBody.addEventListener('collide', onCollide);
   }
 
   private setupUI() {
-    const buttons = {
-      'btn-left': { x: -1, z: 0 },
-      'btn-right': { x: 1, z: 0 },
-      'btn-forward': { x: 0, z: -1 },
-      'btn-backward': { x: 0, z: 1 },
-    };
-
+    const buttons = { 'btn-left': { x: -1, z: 0 }, 'btn-right': { x: 1, z: 0 }, 'btn-forward': { x: 0, z: -1 }, 'btn-backward': { x: 0, z: 1 } };
     const activeKeys = new Set<string>();
-
     Object.entries(buttons).forEach(([id, dir]) => {
       const btn = document.getElementById(id);
       if (btn) {
         btn.addEventListener('mousedown', () => activeKeys.add(id));
-        btn.addEventListener('mouseup', () => activeKeys.delete(id));
-        btn.addEventListener('mouseleave', () => activeKeys.delete(id));
-        // タッチイベント対応
+        ['mouseup', 'mouseleave'].forEach(evt => btn.addEventListener(evt, () => activeKeys.delete(id)));
         btn.addEventListener('touchstart', (e) => { e.preventDefault(); activeKeys.add(id); });
         btn.addEventListener('touchend', () => activeKeys.delete(id));
       }
     });
 
-    const dropBtn = document.getElementById('btn-drop');
-    dropBtn?.addEventListener('click', () => this.startDropSequence());
+    document.getElementById('btn-drop')?.addEventListener('click', () => this.startDropSequence());
+    document.getElementById('btn-reset')?.addEventListener('click', () => this.resetPosition());
+    document.getElementById('btn-open')?.addEventListener('click', () => { this.targetLeftAngle = this.OPEN_ANGLE; this.targetRightAngle = -this.OPEN_ANGLE; });
+    document.getElementById('btn-close')?.addEventListener('click', () => { this.targetLeftAngle = this.CLOSED_ANGLE; this.targetRightAngle = -this.CLOSED_ANGLE; });
 
-    const resetBtn = document.getElementById('btn-reset');
-    resetBtn?.addEventListener('click', () => this.resetPosition());
-
-    // 毎フレームの移動処理
     this.world.addEventListener('preStep', () => {
-      if (this.isDropping) return;
-
-      activeKeys.forEach(id => {
-        const dir = buttons[id as keyof typeof buttons];
-        this.cranePos.x += dir.x * this.craneSpeed;
-        this.cranePos.z += dir.z * this.craneSpeed;
-      });
-
-      this.craneBody.position.set(this.cranePos.x, this.cranePos.y, this.cranePos.z);
+      this.applyArmTorque();
+      if (!this.isDropping) {
+        activeKeys.forEach(id => {
+          const dir = (buttons as any)[id];
+          if (dir) { this.cranePos.x += dir.x * 0.05; this.cranePos.z += dir.z * 0.05; }
+        });
+        this.craneBody.position.set(this.cranePos.x, this.cranePos.y, this.cranePos.z);
+      }
     });
+  }
+
+  private applyArmTorque() {
+    const control = (body: CANNON.Body, target: number) => {
+      const q = body.quaternion;
+      const current = 2 * Math.atan2(q.z, q.w);
+      const diff = target - current;
+      const torque = diff * this.ARM_POWER - body.angularVelocity.z * 1.5;
+      body.torque.z = torque;
+      body.angularVelocity.x *= 0.9; body.angularVelocity.y *= 0.9;
+      body.quaternion.x = 0; body.quaternion.y = 0; body.quaternion.normalize();
+      return current;
+    };
+    control(this.leftArmBody, this.targetLeftAngle);
+    control(this.rightArmBody, this.targetRightAngle);
   }
 
   private async startDropSequence() {
     if (this.isDropping) return;
     this.isDropping = true;
+    this.isTouchingSomething = false;
+    this.targetLeftAngle = this.OPEN_ANGLE; this.targetRightAngle = -this.OPEN_ANGLE;
+    await new Promise(r => setTimeout(r, 1500));
 
-    // 1. 降下
     const startY = this.cranePos.y;
-    const targetY = 3.5;
-    for (let y = startY; y > targetY; y -= 0.05) {
-      this.cranePos.y = y;
-      this.craneBody.position.y = y;
+    while (this.cranePos.y > 3.2 && !this.isTouchingSomething) {
+      this.cranePos.y -= 0.0125;
+      this.craneBody.position.y = this.cranePos.y;
       await new Promise(r => setTimeout(r, 16));
     }
 
-    // 2. 少し待機（掴む動作の代わり）
-    await new Promise(r => setTimeout(r, 500));
+    this.targetLeftAngle = this.CLOSED_ANGLE; this.targetRightAngle = -this.CLOSED_ANGLE;
+    await new Promise(r => setTimeout(r, 2000));
 
-    // 3. 上昇
-    for (let y = targetY; y < startY; y += 0.05) {
-      this.cranePos.y = y;
-      this.craneBody.position.y = y;
+    while (this.cranePos.y < startY) {
+      this.cranePos.y += 0.0125;
+      this.craneBody.position.y = this.cranePos.y;
       await new Promise(r => setTimeout(r, 16));
     }
-
     this.isDropping = false;
+    this.isTouchingSomething = false;
   }
 
   private resetPosition() {
@@ -199,9 +259,18 @@ class CraneSimulator {
     this.prizeBody.velocity.set(0, 0, 0);
     this.prizeBody.angularVelocity.set(0, 0, 0);
     this.prizeBody.quaternion.set(0, 0, 0, 1);
-
-    this.cranePos.set(0, 5, 0);
-    this.craneBody.position.set(0, 5, 0);
+    this.cranePos.set(0, 8.5, 0);
+    this.craneBody.position.set(0, 8.5, 0);
+    this.isTouchingSomething = false;
+    this.targetLeftAngle = 0.1;
+    this.targetRightAngle = -0.1;
+    [this.leftArmBody, this.rightArmBody].forEach((body, i) => {
+      const attach = i === 0 ? new CANNON.Vec3(-0.5, -0.2, 0) : new CANNON.Vec3(0.5, -0.2, 0);
+      body.position.set(this.cranePos.x + attach.x, this.cranePos.y + attach.y, this.cranePos.z);
+      body.quaternion.set(0, 0, 0, 1);
+      body.velocity.set(0, 0, 0);
+      body.angularVelocity.set(0, 0, 0);
+    });
   }
 
   private onWindowResize() {
@@ -212,18 +281,12 @@ class CraneSimulator {
 
   private animate() {
     requestAnimationFrame(() => this.animate());
-
-    // 物理演算の更新
     this.world.fixedStep();
-
-    // 物理体の位置をメッシュに反映
-    this.prizeMesh.position.copy(this.prizeBody.position as any);
-    this.prizeMesh.quaternion.copy(this.prizeBody.quaternion as any);
-
-    this.craneMesh.position.copy(this.craneBody.position as any);
-
+    if (this.prizeMesh) { this.prizeMesh.position.copy(this.prizeBody.position as any); this.prizeMesh.quaternion.copy(this.prizeBody.quaternion as any); }
+    if (this.craneMesh) { this.craneMesh.position.copy(this.craneBody.position as any); this.craneMesh.quaternion.copy(this.craneBody.quaternion as any); }
+    if (this.leftArmGroup) { this.leftArmGroup.position.copy(this.leftArmBody.position as any); this.leftArmGroup.quaternion.copy(this.leftArmBody.quaternion as any); }
+    if (this.rightArmGroup) { this.rightArmGroup.position.copy(this.rightArmBody.position as any); this.rightArmGroup.quaternion.copy(this.rightArmBody.quaternion as any); }
     this.renderer.render(this.scene, this.camera);
   }
 }
-
 new CraneSimulator();
