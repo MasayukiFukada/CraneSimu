@@ -31,7 +31,7 @@ class CraneSimulator {
   private readonly BIT_BRIDGE = 8;
 
   // 状態
-  private cranePos = new THREE.Vector3(0, 8.5, 0);
+  private cranePos = new THREE.Vector3(0, 6.5, 0);
   private isDropping = false;
   private isTouchingSomething = false;
   private targetLeftAngle = 0.1;
@@ -114,7 +114,7 @@ class CraneSimulator {
     const size = { x: 1.5, y: 1, z: 2.5 };
     this.prizeMesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshPhongMaterial({ color: 0xffaa00 }));
     this.scene.add(this.prizeMesh);
-    this.prizeBody = new CANNON.Body({ mass: 6.0, material: (this as any).pMat }); // 3倍重く
+    this.prizeBody = new CANNON.Body({ mass: 10.0, material: (this as any).pMat }); // 3倍重く
     this.prizeBody.addShape(new CANNON.Box(new CANNON.Vec3(size.x/2, size.y/2, size.z/2)));
     this.prizeBody.position.set(0, 4, 0);
     this.prizeBody.collisionFilterGroup = this.BIT_PRIZE;
@@ -124,7 +124,7 @@ class CraneSimulator {
   private setupCrane() {
     this.craneMesh = new THREE.Group();
     this.scene.add(this.craneMesh);
-    this.craneMesh.add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), new THREE.MeshPhongMaterial({ color: 0x4444ff })));
+    this.craneMesh.add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), new THREE.MeshPhongMaterial({ color: 0xff8c00 })));
 
     this.craneBody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC });
     this.craneBody.addShape(new CANNON.Sphere(0.5));
@@ -136,20 +136,20 @@ class CraneSimulator {
     const createArm = (isLeft: boolean) => {
       const group = new THREE.Group();
       const mat = new THREE.MeshPhongMaterial({ color: 0x6666ff });
-      const ur = isLeft ? -0.7 : 0.7, lr = isLeft ? 0.4 : -0.4, tr = isLeft ? -0.1 : 0.1;
+      const ur = isLeft ? -1.0 : 1.0, lr = isLeft ? 0.6 : -0.6, tr = isLeft ? -0.1 : 0.1;
 
-      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.225, 1.0, 0.2), mat);
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.225, 1.3, 0.2), new THREE.MeshPhongMaterial({ color: 0x00ffff }));
       upper.rotation.z = ur;
       upper.position.set(Math.sin(ur)*0.5, -Math.cos(ur)*0.5, 0);
       group.add(upper);
 
-      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.075, 1.2, 0.2), mat);
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.075, 1.8, 0.2), new THREE.MeshPhongMaterial({ color: 0xff00ff }));
       lower.rotation.z = lr;
-      const p1x = Math.sin(ur)*1.0, p1y = -Math.cos(ur)*1.0;
+      const p1x = Math.sin(ur)*1.2, p1y = -Math.cos(ur)*1.2;
       lower.position.set(p1x + Math.sin(lr)*0.6, p1y - Math.cos(lr)*0.6, 0);
       group.add(lower);
 
-      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.2), mat);
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.2), new THREE.MeshPhongMaterial({ color: 0x00ff00 }));
       tip.rotation.z = tr;
       const p2x = p1x + Math.sin(lr)*1.2, p2y = p1y - Math.cos(lr)*1.2;
       tip.position.set(p2x + (isLeft?0.1:-0.1), p2y, 0);
