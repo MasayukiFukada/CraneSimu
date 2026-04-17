@@ -22,7 +22,7 @@ class CraneSimulator {
   // 定数
   private readonly CLOSED_ANGLE = 0.1;
   private readonly OPEN_ANGLE = -0.7;
-  private readonly ARM_POWER = 10.0;
+  private readonly ARM_POWER = 35.0; // 現実的なパワーに調整
 
   // 衝突フィルタ
   private readonly BIT_CRANE = 1;
@@ -54,7 +54,7 @@ class CraneSimulator {
     this.controls.update();
 
     this.world = new CANNON.World();
-    this.world.gravity.set(0, -9.82, 0);
+    this.world.gravity.set(0, -98.0, 0); // スケールに合わせた重力（1ユニット=10cm想定）
     this.world.allowSleep = false;
 
     this.scene.add(new THREE.GridHelper(20, 20));
@@ -114,7 +114,9 @@ class CraneSimulator {
     const size = { x: 1.5, y: 1, z: 2.5 };
     this.prizeMesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshPhongMaterial({ color: 0xffaa00 }));
     this.scene.add(this.prizeMesh);
-    this.prizeBody = new CANNON.Body({ mass: 10.0, material: (this as any).pMat }); // 3倍重く
+    this.prizeBody = new CANNON.Body({ mass: 0.5, material: (this as any).pMat }); // 現実的な質量（500g相当）
+    this.prizeBody.linearDamping = 0.05; // わずかな空気抵抗
+    this.prizeBody.angularDamping = 0.1; // 回転の減衰
     this.prizeBody.addShape(new CANNON.Box(new CANNON.Vec3(size.x/2, size.y/2, size.z/2)));
     this.prizeBody.position.set(0, 4, 0);
     this.prizeBody.collisionFilterGroup = this.BIT_PRIZE;
