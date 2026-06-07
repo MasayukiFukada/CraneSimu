@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 
 class CraneSimulator {
   private scene: THREE.Scene;
@@ -18,6 +19,9 @@ class CraneSimulator {
   private rightArmBody!: CANNON.Body;
   private leftArmGroup!: THREE.Group;
   private rightArmGroup!: THREE.Group;
+
+  // デバッグ用フラグ (物理コライダーの表示)
+  private readonly DEBUG_SHOW_COLLIDERS = true;
 
   // 定数
   private readonly CLOSED_ANGLE = 0.1;
@@ -37,7 +41,7 @@ class CraneSimulator {
   private targetLeftAngle = 0.1;
   private targetRightAngle = -0.1;
 
-  constructor() {
+  constructor(bodyGeometry: THREE.BufferGeometry, armGeometry: THREE.BufferGeometry) {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf0f0f0);
 
@@ -59,10 +63,10 @@ class CraneSimulator {
 
     this.scene.add(new THREE.GridHelper(20, 20));
 
-    this.setupLights();
+     this.setupLights();
     this.setupBridge();
     this.setupPrize();
-    this.setupCrane();
+    this.setupCrane(bodyGeometry, armGeometry);
     this.setupUI();
 
     this.animate();
@@ -123,11 +127,23 @@ class CraneSimulator {
     this.world.addBody(this.prizeBody);
   }
 
-  private setupCrane() {
+  private setupCrane(bodyGeom: THREE.BufferGeometry, armGeom: THREE.BufferGeometry) {
+    // クレーン本体 of 3Dモデル調整
+    const bodyGeometry = bodyGeom.clone();
+    bodyGeometry.center(); // 原点を中心に合わせる
+    bodyGeometry.rotateX(-Math.PI / 2); // 元の回転: Z-up から Y-up に変換
+    bodyGeometry.translate(0, 5.0, 0); // アーム上端（回転軸）に合わせて本体を上方にオフセット
+    bodyGeometry.scale(0.1, 0.1, 0.1); // スケーリング
+
     this.craneMesh = new THREE.Group();
     this.scene.add(this.craneMesh);
-    this.craneMesh.add(new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 16), new THREE.MeshPhongMaterial({ color: 0xff8c00 })));
+    
+    // クレーン本体のメッシュ作成
+    const bodyMat = new THREE.MeshPhongMaterial({ color: 0xff8c00, side: THREE.DoubleSide });
+    const bodyMesh = new THREE.Mesh(bodyGeometry, bodyMat);
+    this.craneMesh.add(bodyMesh);
 
+    // KINEMATICボディ（衝突判定用、元のSphereコライダーを維持）
     this.craneBody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC });
     this.craneBody.addShape(new CANNON.Sphere(0.5));
     this.craneBody.position.set(this.cranePos.x, this.cranePos.y, this.cranePos.z);
@@ -137,31 +153,87 @@ class CraneSimulator {
 
     const createArm = (isLeft: boolean) => {
       const group = new THREE.Group();
-      const mat = new THREE.MeshPhongMaterial({ color: 0x6666ff });
-      const ur = isLeft ? -1.0 : 1.0, lr = isLeft ? 0.6 : -0.6, tr = isLeft ? -0.1 : 0.1;
+      
+      // アームの3Dモデル調整
+      const armGeometry = armGeom.clone();
+      armGeometry.rotateX(-Math.PI / 2); // 元の回転: Z-up から Y-up に変換 (爪が下、ヒンジが上)
 
-      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.225, 1.3, 0.2), new THREE.MeshPhongMaterial({ color: 0x00ffff }));
-      upper.rotation.z = ur;
-      upper.position.set(Math.sin(ur)*0.5, -Math.cos(ur)*0.5, 0);
-      group.add(upper);
+      // 上端（ヒンジ）を原点(0,0,0)に合わせるための平行移動
+      armGeometry.computeBoundingBox();
+      if (armGeometry.boundingBox) {
+        const maxY = armGeometry.boundingBox.max.y;
+        armGeometry.translate(0, -maxY, 0);
+      }
 
-      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.075, 1.8, 0.2), new THREE.MeshPhongMaterial({ color: 0xff00ff }));
-      lower.rotation.z = lr;
-      const p1x = Math.sin(ur)*1.2, p1y = -Math.cos(ur)*1.2;
-      lower.position.set(p1x + Math.sin(lr)*0.6, p1y - Math.cos(lr)*0.6, 0);
-      group.add(lower);
+      // アームメッシュの作成
+      const armMat = new THREE.MeshPhongMaterial({ 
+        color: 0x6666ff, 
+        side: THREE.DoubleSide,
+        flatShading: true
+      });
+      const armMesh = new THREE.Mesh(armGeometry, armMat);
+      
+      // 微調整用オフセット (左右個別に設定)
+      // 左アームは右方向（正の値）、右アームは左方向（負の値）へシフトすることで内側に移動します
+      const offsetX = isLeft ? 0.25 : -0.3; // 左アームを少し右（内側）へ、右アームを左（内側）へシフト
+      const offsetY = 0.2;
+      armMesh.position.set(offsetX, offsetY, 0);
+      
+      // スケール適用。右アームはX軸を反転させて鏡写しにする
+      armMesh.scale.set(isLeft ? 0.1 : -0.1, 0.1, 0.1);
+      group.add(armMesh);
+      
+      // 物理コライダーの寸法・角度パラメータ（STLモデルに合わせて調整可能）
+      const ur = isLeft ? -1.0 : 1.0;   // 上アームの傾き（ラジアン）- そのまま維持
+      const lr = isLeft ? 0.48 : -0.48; // 下アームの傾き（ラジアン）- 傾きを緩めて外側を通す
+      const tr = isLeft ? -0.05 : 0.05; // 爪先の傾き（ラジアン）- ほぼ水平
+      
+      const L1 = 1.05; // 上アームの長さ
+      const L2 = 1.35; // 下アームの長さ - やや長かったため少し短縮
+      
+      const W1 = 0.15; // 上アームの半幅
+      const W2 = 0.09; // 下アームの半幅
+      const W3 = 0.02; // 爪先の半厚み - 少し厚かったため薄く調整（厚さ 0.04）
+      const H3 = 0.12; // 爪先の半長さ (全幅 0.24)
+      
+      // 各関節の接続点計算
+      const p1x = Math.sin(ur) * L1;
+      const p1y = -Math.cos(ur) * L1;
+      const p2x = p1x + Math.sin(lr) * L2;
+      const p2y = p1y - Math.cos(lr) * L2;
+      
+      // コライダーの中心位置計算
+      const c1 = new THREE.Vector3(p1x * 0.5, p1y * 0.5, 0); // 上アーム中心
+      const c2 = new THREE.Vector3(p1x + Math.sin(lr) * L2 * 0.5, p1y - Math.cos(lr) * L2 * 0.5, 0); // 下アーム中心
+      const c3 = new THREE.Vector3(p2x + (isLeft ? 1 : -1) * Math.cos(tr) * H3, p2y + Math.sin(tr) * H3, 0); // 爪先中心
+      
+      // デバッグ用に物理コライダーを可視化する場合
+      if (this.DEBUG_SHOW_COLLIDERS) {
+        const debugMatUpper = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.5 });
+        const upper = new THREE.Mesh(new THREE.BoxGeometry(W1 * 2, L1, 0.2), debugMatUpper);
+        upper.rotation.z = ur;
+        upper.position.copy(c1);
+        group.add(upper);
 
-      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.2), new THREE.MeshPhongMaterial({ color: 0x00ff00 }));
-      tip.rotation.z = tr;
-      const p2x = p1x + Math.sin(lr)*1.2, p2y = p1y - Math.cos(lr)*1.2;
-      tip.position.set(p2x + (isLeft?0.1:-0.1), p2y, 0);
-      group.add(tip);
+        const debugMatLower = new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true, transparent: true, opacity: 0.5 });
+        const lower = new THREE.Mesh(new THREE.BoxGeometry(W2 * 2, L2, 0.2), debugMatLower);
+        lower.rotation.z = lr;
+        lower.position.copy(c2);
+        group.add(lower);
+
+        const debugMatTip = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true, transparent: true, opacity: 0.5 });
+        const tip = new THREE.Mesh(new THREE.BoxGeometry(H3 * 2, W3 * 2, 0.2), debugMatTip);
+        tip.rotation.z = tr;
+        tip.position.copy(c3);
+        group.add(tip);
+      }
+      
       this.scene.add(group);
 
       const body = new CANNON.Body({ mass: 0.5, material: (this as any).aMat });
-      body.addShape(new CANNON.Box(new CANNON.Vec3(0.11, 0.5, 0.1)), new CANNON.Vec3(upper.position.x, upper.position.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), ur));
-      body.addShape(new CANNON.Box(new CANNON.Vec3(0.04, 0.6, 0.1)), new CANNON.Vec3(lower.position.x, lower.position.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), lr));
-      body.addShape(new CANNON.Box(new CANNON.Vec3(0.1, 0.02, 0.1)), new CANNON.Vec3(tip.position.x, tip.position.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), tr));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(W1, L1 * 0.5, 0.1)), new CANNON.Vec3(c1.x, c1.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), ur));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(W2, L2 * 0.5, 0.1)), new CANNON.Vec3(c2.x, c2.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), lr));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(H3, W3, 0.1)), new CANNON.Vec3(c3.x, c3.y, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0,0,1), tr));
 
       const attach = isLeft ? new CANNON.Vec3(-0.5, -0.2, 0) : new CANNON.Vec3(0.5, -0.2, 0);
       body.position.set(this.cranePos.x + attach.x, this.cranePos.y + attach.y, this.cranePos.z);
@@ -188,7 +260,7 @@ class CraneSimulator {
   private setupUI() {
     const buttons = { 'btn-left': { x: -1, z: 0 }, 'btn-right': { x: 1, z: 0 }, 'btn-forward': { x: 0, z: -1 }, 'btn-backward': { x: 0, z: 1 } };
     const activeKeys = new Set<string>();
-    Object.entries(buttons).forEach(([id, dir]) => {
+    Object.keys(buttons).forEach(id => {
       const btn = document.getElementById(id);
       if (btn) {
         btn.addEventListener('mousedown', () => activeKeys.add(id));
@@ -290,5 +362,21 @@ class CraneSimulator {
     if (this.rightArmGroup) { this.rightArmGroup.position.copy(this.rightArmBody.position as any); this.rightArmGroup.quaternion.copy(this.rightArmBody.quaternion as any); }
     this.renderer.render(this.scene, this.camera);
   }
+
+  static async init() {
+    const loader = new STLLoader();
+    try {
+      const [bodyGeom, armGeom] = await Promise.all([
+        loader.loadAsync('/crane_body.stl'),
+        loader.loadAsync('/crane_arm.stl')
+      ]);
+      return new CraneSimulator(bodyGeom, armGeom);
+    } catch (err) {
+      console.error('Failed to load STL assets, falling back to basic geometries', err);
+      const bodyGeom = new THREE.SphereGeometry(0.5, 16, 16);
+      const armGeom = new THREE.BoxGeometry(0.2, 2.0, 0.2); // ダミー
+      return new CraneSimulator(bodyGeom, armGeom);
+    }
+  }
 }
-new CraneSimulator();
+CraneSimulator.init();
