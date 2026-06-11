@@ -13,8 +13,8 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
-    "three": "^0.160.0",
-    "cannon-es": "^0.20.0",
-    "@types/three": "^0.160.0"
+    "@dimforge/rapier3d-compat": "^0.19.3",
+    "@types/three": "^0.160.0",
+    "three": "^0.160.0"
   }
 }
