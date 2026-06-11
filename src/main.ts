@@ -38,6 +38,7 @@ class CraneSimulator {
 
   // 状態
   private cranePos = new THREE.Vector3(0, 6.5, 0);
+  private readonly prizeStartPos = new THREE.Vector3(0, 4.0, -0.3); // 箱の初期位置 (Z方向に-0.3オフセットして奥側に配置)
   private isDropping = false;
   private isTouchingSomething = false;
   private targetLeftAngle = 0.1;
@@ -118,12 +119,13 @@ class CraneSimulator {
     };
 
     // 橋の棒 (摩擦: 10.0 - 滑り止めを非常に強力にし、アームで引っ張られたときに向きが変わりやすくする)
-    createRod(-1, 3, 10.0, 0.1, 0x888888);
-    createRod(1, 3, 10.0, 0.1, 0x888888);
+    // 箱の横幅 1.5 よりも少し広い程度（間隔 1.7）に調整
+    createRod(-0.85, 3, 10.0, 0.1, 0x888888);
+    createRod(0.85, 3, 10.0, 0.1, 0x888888);
 
     // 落下防止のガード (摩擦: 0.1)
-    // 隙間を0.9に調整し、箱の向きが変わる余地を残しつつ落下しすぎないようにする（1.7 から 1.9 に広げる）
-    const guardZ = 1.9;
+    // 隙間を0.9に調整し、箱の向きが変わる余地を残しつつ落下しすぎないようにする
+    const guardZ = 0.85 + 0.9;
     const guardY = 3.0 + 0.5;
     createRod(-guardZ, guardY, 0.1, 0.1, 0xcccccc);
     createRod(guardZ, guardY, 0.1, 0.1, 0xcccccc);
@@ -136,7 +138,7 @@ class CraneSimulator {
 
     // 景品の物理ボディ (DYNAMIC)
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(0, 4, 0)
+      .setTranslation(this.prizeStartPos.x, this.prizeStartPos.y, this.prizeStartPos.z)
       .setLinearDamping(0.05)
       .setAngularDamping(0.1)
       .setCanSleep(false);
@@ -433,7 +435,7 @@ class CraneSimulator {
   }
 
   private resetPosition() {
-    this.prizeBody.setTranslation({ x: 0, y: 4, z: 0 }, true);
+    this.prizeBody.setTranslation({ x: this.prizeStartPos.x, y: this.prizeStartPos.y, z: this.prizeStartPos.z }, true);
     this.prizeBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.prizeBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.prizeBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
