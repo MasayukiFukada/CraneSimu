@@ -38,7 +38,7 @@ class CraneSimulator {
 
   // 状態
   private cranePos = new THREE.Vector3(0, 6.5, 0);
-  private readonly prizeStartPos = new THREE.Vector3(0, 4.0, -0.3); // 箱の初期位置 (Z方向に-0.3オフセットして奥側に配置)
+  private readonly prizeStartPos = new THREE.Vector3(0, 4.1, -0.05); // 箱の初期位置 (手前のバーの上にしっかり乗るよう手前側に微調整)
   private isDropping = false;
   private isTouchingSomething = false;
   private targetLeftAngle = 0.1;
@@ -119,12 +119,12 @@ class CraneSimulator {
     };
 
     // 橋の棒 (摩擦: 10.0 - 滑り止めを非常に強力にし、アームで引っ張られたときに向きが変わりやすくする)
-    // 箱の横幅 1.5 よりも少し広い程度（間隔 1.7）に調整
+    // 箱の一番長い辺 2.0 に対して、長さより少し短い程度（間隔 1.7）に調整
     createRod(-0.85, 3, 10.0, 0.1, 0x888888);
     createRod(0.85, 3, 10.0, 0.1, 0x888888);
 
     // 落下防止のガード (摩擦: 0.1)
-    // 隙間を0.9に調整し、箱の向きが変わる余地を残しつつ落下しすぎないようにする
+    // 隙間を調整
     const guardZ = 0.85 + 0.9;
     const guardY = 3.0 + 0.5;
     createRod(-guardZ, guardY, 0.1, 0.1, 0xcccccc);
@@ -132,7 +132,7 @@ class CraneSimulator {
   }
 
   private setupPrize() {
-    const size = { x: 1.5, y: 1, z: 2.5 };
+    const size = { x: 1.25, y: 1.25, z: 2.0 };
     this.prizeMesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshPhongMaterial({ color: 0xffaa00 }));
     this.scene.add(this.prizeMesh);
 
@@ -202,11 +202,11 @@ class CraneSimulator {
       });
       const armMesh = new THREE.Mesh(armGeometry, armMat);
       
-      const offsetX = isLeft ? 0.25 : -0.3;
-      const offsetY = 0.2;
+      const offsetX = isLeft ? 0.3125 : -0.375;
+      const offsetY = 0.25;
       armMesh.position.set(offsetX, offsetY, 0);
       
-      armMesh.scale.set(isLeft ? 0.1 : -0.1, 0.1, 0.1);
+      armMesh.scale.set(isLeft ? 0.125 : -0.125, 0.125, 0.1);
       group.add(armMesh);
       
       // 物理コライダーの寸法・角度パラメータ
@@ -214,13 +214,13 @@ class CraneSimulator {
       const lr = isLeft ? 0.48 : -0.48;
       const tr = isLeft ? -0.05 : 0.05;
       
-      const L1 = 1.05;
-      const L2 = 1.35;
+      const L1 = 1.3125;
+      const L2 = 1.6875;
       
-      const W1 = 0.15;
-      const W2 = 0.09;
-      const W3 = 0.02;
-      const H3 = 0.12;
+      const W1 = 0.1875;
+      const W2 = 0.1125;
+      const W3 = 0.025;
+      const H3 = 0.15;
       
       const p1x = Math.sin(ur) * L1;
       const p1y = -Math.cos(ur) * L1;
