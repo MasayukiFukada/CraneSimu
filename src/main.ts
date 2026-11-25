@@ -14,6 +14,7 @@ class CraneSimulator {
   // 物理体
   private prizeBody!: RAPIER.RigidBody;
   private prizeMesh!: THREE.Mesh;
+  private prizeGroup!: THREE.Group;
   private craneBody!: RAPIER.RigidBody;
   private craneMesh!: THREE.Group;
   private leftArmBody!: RAPIER.RigidBody;
@@ -38,7 +39,7 @@ class CraneSimulator {
 
   // 状態
   private cranePos = new THREE.Vector3(0, 6.5, 0);
-  private readonly prizeStartPos = new THREE.Vector3(0, 4.1, -0.05); // 箱の初期位置 (手前のバーの上にしっかり乗るよう手前側に微調整)
+  private readonly prizeStartPos = new THREE.Vector3(0, 4.1, 0.0); // 箱の初期位置 (両方のバーの上にしっかり乗るようZ位置を0.0に調整)
   private isDropping = false;
   private isTouchingSomething = false;
   private targetLeftAngle = 0.1;
@@ -79,7 +80,10 @@ class CraneSimulator {
 
     this.setupLights();
     this.setupBridge();
-    this.setupPrize();
+    const ox = (Math.random() - 0.5) * 0.6;
+    const oy = (Math.random() - 0.5) * 0.6;
+    const oz = (Math.random() - 0.5) * 1.0;
+    this.setupPrize(ox, oy, oz);
     this.setupCrane(bodyGeometry, armGeometry);
     this.setupUI();
 
@@ -131,21 +135,43 @@ class CraneSimulator {
     createRod(guardZ, guardY, 0.1, 0.1, 0xcccccc);
   }
 
-  private setupPrize() {
+  private setupPrize(ox = 0, oy = 0, oz = 0) {
     const size = { x: 1.25, y: 1.25, z: 2.0 };
-    this.prizeMesh = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), new THREE.MeshPhongMaterial({ color: 0xffaa00 }));
-    this.scene.add(this.prizeMesh);
+    
+    this.prizeGroup = new THREE.Group();
+    this.scene.add(this.prizeGroup);
+
+    this.prizeMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(size.x, size.y, size.z), 
+      new THREE.MeshPhongMaterial({ color: 0xffaa00, transparent: true, opacity: 0.6 })
+    );
+    this.prizeMesh.position.set(ox, oy, oz);
+    this.prizeGroup.add(this.prizeMesh);
+
+    // 重心表示用の赤い球 (グループの原点 = 物理的な重心)
+    const centerGeo = new THREE.SphereGeometry(0.08, 16, 16);
+    const centerMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+    const centerMesh = new THREE.Mesh(centerGeo, centerMat);
+    centerMesh.position.set(0, 0, 0);
+    this.prizeGroup.add(centerMesh);
+
+    // 箱の下面がちょうど橋の上面 (y = 3.1) に接地するような剛体中心のY座標を計算
+    // 橋の棒の上面: 3.1 (棒の中心 3.0 + 半径 0.1)
+    // 箱の下面のローカルY座標: oy - (size.y / 2)
+    // 接地条件: bodyY + (oy - 0.625) = 3.1 => bodyY = 3.725 - oy
+    const bodyY = 3.1 + (size.y / 2) - oy;
 
     // 景品の物理ボディ (DYNAMIC)
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(this.prizeStartPos.x, this.prizeStartPos.y, this.prizeStartPos.z)
+      .setTranslation(this.prizeStartPos.x, bodyY, this.prizeStartPos.z)
       .setLinearDamping(0.05)
       .setAngularDamping(0.1)
       .setCanSleep(false);
     this.prizeBody = this.world.createRigidBody(bodyDesc);
 
-    // コライダーの作成 (質量 500g 相当)
+    // コライダーの作成 (重心をずらすためにオフセット Translation を適用)
     const colliderDesc = RAPIER.ColliderDesc.cuboid(size.x / 2, size.y / 2, size.z / 2)
+      .setTranslation(ox, oy, oz)
       .setMass(0.5)
       .setFriction(1.0)
       .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Multiply)
@@ -435,10 +461,21 @@ class CraneSimulator {
   }
 
   private resetPosition() {
-    this.prizeBody.setTranslation({ x: this.prizeStartPos.x, y: this.prizeStartPos.y, z: this.prizeStartPos.z }, true);
-    this.prizeBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    this.prizeBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    this.prizeBody.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    // 既存の景品を破棄して再生成
+    if (this.prizeBody) {
+      this.world.removeRigidBody(this.prizeBody);
+    }
+    if (this.prizeGroup) {
+      this.scene.remove(this.prizeGroup);
+    }
+
+    // 重心オフセットをランダムに決定
+    const ox = (Math.random() - 0.5) * 0.6; // -0.3 から 0.3
+    const oy = (Math.random() - 0.5) * 0.6; // -0.3 から 0.3
+    const oz = (Math.random() - 0.5) * 1.0; // -0.5 から 0.5
+    
+    console.log(`重心オフセットを設定しました: X=${ox.toFixed(3)}, Y=${oy.toFixed(3)}, Z=${oz.toFixed(3)}`);
+    this.setupPrize(ox, oy, oz);
 
     this.cranePos.set(0, 8.5, 0);
     this.craneBody.setTranslation({ x: 0, y: 8.5, z: 0 }, true);
@@ -509,11 +546,11 @@ class CraneSimulator {
     });
 
     // メッシュの位置・回転の同期
-    if (this.prizeMesh) {
+    if (this.prizeGroup) {
       const pos = this.prizeBody.translation();
       const rot = this.prizeBody.rotation();
-      this.prizeMesh.position.set(pos.x, pos.y, pos.z);
-      this.prizeMesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+      this.prizeGroup.position.set(pos.x, pos.y, pos.z);
+      this.prizeGroup.quaternion.set(rot.x, rot.y, rot.z, rot.w);
     }
     if (this.craneMesh) {
       const pos = this.craneBody.translation();
